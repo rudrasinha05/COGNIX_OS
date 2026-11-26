@@ -231,3 +231,41 @@ pub mod net {
     }
     #[cfg(test)]mod tests{use super::*;#[test]fn packet(){let mut p=[0u8;21];p[0]=0x45;p[3]=21;p[8]=64;p[9]=17;p[20]=7;let c=checksum(&p[..20]).to_be_bytes();p[10]=c[0];p[11]=c[1];assert_eq!(parse_ipv4(&p).unwrap().payload,&[7]);p[8]=1;assert!(matches!(parse_ipv4(&p),Err(Error::Checksum)));}}
 }
+
+pub mod intent {
+    //! Strict typed command parser. AI proposals never execute as shell commands.
+    use super::{Action,Pool,Operation};
+    use alloc::vec::Vec;
+    #[derive(Debug,PartialEq,Eq)]pub enum Error{Invalid,TooMany}
+    pub fn parse(input:&str)->Result<Vec<Action>,Error>{
+        if input.len()>8192{return Err(Error::TooMany)}
+        let mut out=Vec::new();
+        for line in input.lines().filter(|l|!l.trim().is_empty()){
+            if out.len()>=64{return Err(Error::TooMany)}
+            let mut p=line.split_ascii_whitespace();
+            let number=|s:Option<&str>|s.and_then(|v|v.parse::<u64>().ok()).ok_or(Error::Invalid);
+            let a=match p.next(){
+                Some("spawn")=>{let id=number(p.next())?;let pool=match p.next(){Some("ram")=>Pool::Ram,Some("vram")=>Pool::Vram,Some("unified")=>Pool::Unified,_=>return Err(Error::Invalid)};let bytes=number(p.next())?;if bytes==0{return Err(Error::Invalid)}Action::Spawn{id,pool,bytes}},
+                Some("stop")=>Action::Stop{id:number(p.next())?},
+                Some("app")=>{let app=number(p.next())?;let operation=match p.next(){Some("observe")=>Operation::Observe,Some("navigate")=>Operation::Navigate,Some("modify")=>Operation::Modify,_=>return Err(Error::Invalid)};Action::App{app,operation}},
+                _=>return Err(Error::Invalid)
+            };
+            if p.next().is_some(){return Err(Error::Invalid)}out.push(a);
+        }
+        if out.is_empty(){return Err(Error::Invalid)}Ok(out)
+    }
+    #[cfg(test)]mod tests{use super::*;#[test]fn strict(){assert_eq!(parse("spawn 1 ram 64\nstop 1").unwrap().len(),2);assert_eq!(parse("spawn 1 ram 0"),Err(Error::Invalid));assert_eq!(parse("app 1 modify extra"),Err(Error::Invalid));assert_eq!(parse("shell rm"),Err(Error::Invalid));}}
+}
+pub mod workflow {
+    //! Reference broker: each action must pass existing authorization; no automatic grant.
+    use super::{Action,System,Error};
+    use alloc::vec::Vec;
+    #[derive(Debug,PartialEq,Eq)]pub struct Step{pub token:u64,pub action:Action}
+    #[derive(Debug,PartialEq,Eq)]pub struct Report{pub results:Vec<Result<(),Error>>,pub unexecuted:usize}
+    pub fn run(system:&mut System,actor:u64,steps:&[Step])->Report{
+        let mut results=Vec::new();
+        for s in steps{let r=system.execute(actor,s.token,s.action.clone());results.push(r);if r.is_err(){break}}
+        Report{unexecuted:steps.len()-results.len(),results}
+    }
+    #[cfg(test)]mod tests{use super::*;use crate::{Mode,Pool,Scope};#[test]fn no_implicit_permission(){let mut s=System::new(Mode::Local,&[(Pool::Ram,100)]);s.grant(1,7,Scope::Process,1).unwrap();let r=run(&mut s,7,&[Step{token:1,action:Action::Spawn{id:1,pool:Pool::Ram,bytes:10}},Step{token:1,action:Action::Stop{id:1}},Step{token:1,action:Action::Stop{id:1}}]);assert_eq!(r.results,alloc::vec![Ok(()),Err(Error::Denied)]);assert_eq!(r.unexecuted,1);assert_eq!(s.used(Pool::Ram),10);}}
+}
