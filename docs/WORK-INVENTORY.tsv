@@ -1,0 +1,17 @@
+subsystem	status	next
+boot	UEFI console entry only	kernel loading and emulator test
+kernel	unimplemented native execution	interrupts syscalls and address spaces
+memory	reference frame accounting	firmware map and page tables
+scheduler	reference round robin	context switching and timers
+ipc	bounded reference queue	kernel authentication
+security	in-process capability reference	kernel-enforced isolation
+transaction	in-memory atomic store	persistent crash recovery
+storage	unimplemented	block drivers and filesystem
+network	unimplemented	NIC drivers and protocols
+AI	planner interface	Ollama and cloud adapters
+app control	request queue only	actual authorized adapter and revocation
+graphics	unimplemented	framebuffer and compositor
+developer ecosystem	unimplemented	SDK toolchain and IDE
+compatibility	unimplemented	ABI and VM strategy
+distribution	unimplemented	installer packaging ISO
+testing	authored tests CI unverified	build and emulator evidence
