@@ -1,0 +1,7 @@
+# BDR — Fundamental Development Rule: Autonomous Completion Loop
+
+Mandatory for every development agent, subordinate agent, reviewer and session. Preserve the owner-approved Master Architecture v1.0 and all requirements. Work only on develop; do not modify main.
+
+Before stopping, audit the entire project against the approved requirements and inspect implementation, integration, defects, tests, security, build and documentation. Identify every remaining task that can be completed without owner involvement. Execute those tasks, verify actual results, then repeat the whole-project audit. A commit, milestone, module completion, or blocker in one subsystem is not a stopping condition. Continue on other independent tasks. Never treat placeholders, mock functionality or unrun tests as completed production functionality.
+
+Stop only when no independently executable task remains, the owner explicitly stops work, or actual execution/tool/resource limits prevent further work. Record any limits and remaining work accurately; do not claim background execution. Do not ask the owner for routine technical decisions. Obtain owner authorization for credentials, spending, physical device changes, sensitive actions and changes to locked requirements. Respect permissions and preserve data. Maintain a machine-readable work inventory where feasible and report evidence of builds/tests and commits, not merely plans.
