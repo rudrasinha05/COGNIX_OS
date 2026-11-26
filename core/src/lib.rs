@@ -125,3 +125,64 @@ mod tests {
         assert_eq!(s.used(Pool::Unified),0);
     }
 }
+
+pub mod foundation {
+    use alloc::{collections::{BTreeSet,VecDeque,BTreeMap},vec::Vec,string::String};
+    #[derive(Debug,PartialEq,Eq)] pub enum Fault { Invalid, Exhausted, Denied, Conflict, Verification }
+    pub const PAGE:u64=4096;
+    pub struct Frames { free:BTreeSet<u64>, used:BTreeSet<u64> }
+    impl Frames {
+        pub fn new(start:u64,end:u64)->Result<Self,Fault>{
+            if start>=end || start%PAGE!=0 || end%PAGE!=0{return Err(Fault::Invalid)}
+            Ok(Self{free:(start..end).step_by(PAGE as usize).collect(),used:BTreeSet::new()})
+        }
+        pub fn reserve(&mut self,start:u64,end:u64)->Result<(),Fault>{
+            if start>=end{return Err(Fault::Invalid)}
+            if self.used.iter().any(|p|*p<end && p.saturating_add(PAGE)>start){return Err(Fault::Conflict)}
+            self.free.retain(|p|!(*p<end && p.saturating_add(PAGE)>start));Ok(())
+        }
+        pub fn allocate(&mut self)->Result<u64,Fault>{
+            let p=*self.free.iter().next().ok_or(Fault::Exhausted)?;
+            self.free.remove(&p);self.used.insert(p);Ok(p)
+        }
+        pub fn release(&mut self,p:u64)->Result<(),Fault>{
+            if !self.used.remove(&p){return Err(Fault::Invalid)}
+            self.free.insert(p);Ok(())
+        }
+    }
+    #[derive(Default)]pub struct Scheduler{ready:VecDeque<u64>,known:BTreeSet<u64>,running:Option<u64>}
+    impl Scheduler{
+        pub fn add(&mut self,id:u64)->bool{if !self.known.insert(id){return false}self.ready.push_back(id);true}
+        pub fn tick(&mut self)->Option<u64>{if let Some(id)=self.running.take(){self.ready.push_back(id)}self.running=self.ready.pop_front();self.running}
+        pub fn remove(&mut self,id:u64)->bool{if !self.known.remove(&id){return false}self.ready.retain(|x|*x!=id);if self.running==Some(id){self.running=None}true}
+    }
+    pub struct Channel{sender:u64,receiver:u64,limit:usize,max:usize,queue:VecDeque<Vec<u8>>}
+    impl Channel{
+        pub fn new(sender:u64,receiver:u64,limit:usize,max:usize)->Self{Self{sender,receiver,limit,max,queue:VecDeque::new()}}
+        pub fn send(&mut self,actor:u64,data:&[u8])->Result<(),Fault>{if actor!=self.sender{return Err(Fault::Denied)}if data.len()>self.max{return Err(Fault::Invalid)}if self.queue.len()>=self.limit{return Err(Fault::Exhausted)}self.queue.push_back(data.to_vec());Ok(())}
+        pub fn receive(&mut self,actor:u64)->Result<Option<Vec<u8>>,Fault>{if actor!=self.receiver{return Err(Fault::Denied)}Ok(self.queue.pop_front())}
+    }
+    #[derive(Default)]pub struct Store{revision:u64,values:BTreeMap<String,Vec<u8>>}
+    impl Store{
+        pub fn get(&self,k:&str)->Option<&[u8]>{self.values.get(k).map(Vec::as_slice)}
+        pub fn commit(&mut self,expected:u64,changes:&[(String,Vec<u8>)],allow:impl Fn(&str)->bool,verify:impl Fn(&BTreeMap<String,Vec<u8>>)->bool)->Result<u64,Fault>{
+            if self.revision!=expected{return Err(Fault::Conflict)}
+            let next=expected.checked_add(1).ok_or(Fault::Conflict)?;
+            let mut staged=self.values.clone();
+            for (k,v) in changes{if !allow(k){return Err(Fault::Denied)}staged.insert(k.clone(),v.clone());}
+            if !verify(&staged){return Err(Fault::Verification)}
+            self.values=staged;self.revision=next;Ok(next)
+        }
+    }
+    #[cfg(test)]mod tests{
+        use super::*;
+        #[test]fn integrated_reference(){
+            let mut f=Frames::new(4096,16384).unwrap();f.reserve(8192,12288).unwrap();
+            let a=f.allocate().unwrap();let b=f.allocate().unwrap();assert_eq!((a,b),(4096,12288));assert_eq!(f.allocate(),Err(Fault::Exhausted));
+            let mut s=Scheduler::default();assert!(s.add(1));assert!(s.add(2));assert_eq!(s.tick(),Some(1));assert_eq!(s.tick(),Some(2));
+            let mut c=Channel::new(1,2,1,8);assert_eq!(c.send(2,b"x"),Err(Fault::Denied));c.send(1,b"ok").unwrap();assert_eq!(c.receive(2).unwrap(),Some(b"ok".to_vec()));
+            let mut t=Store::default();let changes=[("key".into(),alloc::vec![1])];assert_eq!(t.commit(0,&changes,|_|true,|_|false),Err(Fault::Verification));assert_eq!(t.get("key"),None);assert_eq!(t.commit(0,&changes,|_|true,|_|true),Ok(1));
+            assert!(s.remove(1));f.release(a).unwrap();assert_eq!(f.release(a),Err(Fault::Invalid));
+        }
+    }
+}
