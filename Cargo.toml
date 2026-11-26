@@ -1,0 +1,4 @@
+[workspace]
+members = ["core", "simulator"]
+exclude = ["boot"]
+resolver = "2"
