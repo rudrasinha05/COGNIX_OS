@@ -186,3 +186,48 @@ pub mod foundation {
         }
     }
 }
+
+pub mod graphics {
+    #[derive(Debug,PartialEq,Eq)] pub enum Error { Geometry, Bounds }
+    pub struct Surface<'a>{ pixels:&'a mut [u32], width:usize,height:usize,stride:usize }
+    impl<'a> Surface<'a>{
+        pub fn new(pixels:&'a mut [u32],width:usize,height:usize,stride:usize)->Result<Self,Error>{
+            if width==0 || height==0 || stride<width || stride.checked_mul(height).map_or(true,|n|n>pixels.len()){return Err(Error::Geometry)}
+            Ok(Self{pixels,width,height,stride})
+        }
+        pub fn fill(&mut self,x:usize,y:usize,w:usize,h:usize,color:u32)->Result<(),Error>{
+            let right=x.checked_add(w).ok_or(Error::Bounds)?;
+            let bottom=y.checked_add(h).ok_or(Error::Bounds)?;
+            if right>self.width || bottom>self.height{return Err(Error::Bounds)}
+            for row in y..bottom{self.pixels[row*self.stride+x..row*self.stride+right].fill(color)}
+            Ok(())
+        }
+    }
+    #[cfg(test)]mod tests{use super::*;#[test]fn clipped(){let mut p=[0;12];{let mut s=Surface::new(&mut p,3,3,4).unwrap();s.fill(1,1,2,2,7).unwrap();assert_eq!(s.fill(2,2,2,1,9),Err(Error::Bounds));}assert_eq!(p,[0,0,0,0,0,7,7,0,0,7,7,0]);}}
+}
+pub mod block {
+    #[derive(Debug,PartialEq,Eq)]pub enum Error{Geometry,Bounds,Size}
+    pub trait Device{fn block_size(&self)->usize;fn blocks(&self)->usize;fn read(&self,index:usize,out:&mut[u8])->Result<(),Error>;fn write(&mut self,index:usize,input:&[u8])->Result<(),Error>;}
+    pub struct RamDisk<'a>{data:&'a mut[u8],size:usize}
+    impl<'a> RamDisk<'a>{pub fn new(data:&'a mut[u8],size:usize)->Result<Self,Error>{if size==0||data.len()%size!=0{return Err(Error::Geometry)}Ok(Self{data,size})}}
+    impl Device for RamDisk<'_>{
+        fn block_size(&self)->usize{self.size}
+        fn blocks(&self)->usize{self.data.len()/self.size}
+        fn read(&self,index:usize,out:&mut[u8])->Result<(),Error>{if out.len()!=self.size{return Err(Error::Size)}if index>=self.blocks(){return Err(Error::Bounds)}let start=index*self.size;out.copy_from_slice(&self.data[start..start+self.size]);Ok(())}
+        fn write(&mut self,index:usize,input:&[u8])->Result<(),Error>{if input.len()!=self.size{return Err(Error::Size)}if index>=self.blocks(){return Err(Error::Bounds)}let start=index*self.size;self.data[start..start+self.size].copy_from_slice(input);Ok(())}
+    }
+    #[cfg(test)]mod tests{use super::*;#[test]fn block_io(){let mut data=[0;16];let mut d=RamDisk::new(&mut data,4).unwrap();d.write(2,b"test").unwrap();let mut out=[0;4];d.read(2,&mut out).unwrap();assert_eq!(&out,b"test");assert_eq!(d.write(4,b"test"),Err(Error::Bounds));}}
+}
+pub mod net {
+    #[derive(Debug,PartialEq,Eq)]pub enum Error{Truncated,Version,Header,Length,Checksum}
+    pub fn checksum(bytes:&[u8])->u16{let mut sum=0u32;for pair in bytes.chunks(2){sum+=((pair[0] as u32)<<8)|pair.get(1).copied().unwrap_or(0) as u32;sum=(sum&65535)+(sum>>16);}!(sum as u16)}
+    pub struct Ipv4<'a>{pub source:[u8;4],pub destination:[u8;4],pub protocol:u8,pub payload:&'a[u8]}
+    pub fn parse_ipv4(p:&[u8])->Result<Ipv4<'_>,Error>{
+        if p.len()<20{return Err(Error::Truncated)}if p[0]>>4!=4{return Err(Error::Version)}
+        let h=(p[0]&15) as usize*4;if h<20||h>p.len(){return Err(Error::Header)}
+        let n=u16::from_be_bytes([p[2],p[3]]) as usize;if n<h||n>p.len(){return Err(Error::Length)}
+        if checksum(&p[..h])!=0{return Err(Error::Checksum)}
+        Ok(Ipv4{source:[p[12],p[13],p[14],p[15]],destination:[p[16],p[17],p[18],p[19]],protocol:p[9],payload:&p[h..n]})
+    }
+    #[cfg(test)]mod tests{use super::*;#[test]fn packet(){let mut p=[0u8;21];p[0]=0x45;p[3]=21;p[8]=64;p[9]=17;p[20]=7;let c=checksum(&p[..20]).to_be_bytes();p[10]=c[0];p[11]=c[1];assert_eq!(parse_ipv4(&p).unwrap().payload,&[7]);p[8]=1;assert!(matches!(parse_ipv4(&p),Err(Error::Checksum)));}}
+}
